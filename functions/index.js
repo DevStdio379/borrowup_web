@@ -92,4 +92,167 @@ app.post('/payment-sheet', async (req, res) => {
   }
 });
 
+app.post('/create-deposit-intent', async (req, res) => {
+  try {
+    const { amount, currency, customerId } = req.body;
+
+    if (!amount || !currency) {
+      return res.status(400).json({ error: 'Missing amount or currency' });
+    }
+
+    // Optional: reuse customer ID from earlier or create one
+    const customer = customerId || (await stripe.customers.create()).id;
+
+    const ephemeralKey = await stripe.ephemeralKeys.create(
+      { customer },
+      { apiVersion: '2024-09-30.acacia' }
+    );
+
+    const depositIntent = await stripe.paymentIntents.create({
+      amount,
+      currency,
+      customer,
+      automatic_payment_methods: { enabled: true },
+      capture_method: 'manual', // Important: manual capture to "hold" the funds
+    });
+
+    res.status(200).json({
+      paymentIntent: depositIntent.client_secret,
+      ephemeralKey: ephemeralKey.secret,
+      customer,
+      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+    });
+
+  } catch (error) {
+    console.error('[Deposit Intent Error]', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/platform-payment', async (req, res) => {
+  try {
+    const { amount, currency, customerId } = req.body;
+
+    if (!amount || !currency) {
+      return res.status(400).json({ error: 'Missing required fields: amount or currency' });
+    }
+
+    // 1. Create customer if not provided
+    const customer = customerId || (await stripe.customers.create()).id;
+
+    // 2. Create an ephemeral key for the Stripe Payment Sheet
+    const ephemeralKey = await stripe.ephemeralKeys.create(
+      { customer },
+      { apiVersion: '2024-09-30.acacia' } // match Stripe SDK version
+    );
+
+    // 3. Create PaymentIntent that pays fully to platform
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount, // in smallest currency unit, e.g. 200 for £2
+      currency,
+      customer,
+      automatic_payment_methods: { enabled: true },
+    });
+
+    // 4. Return client-side secrets for Stripe Payment Sheet
+    return res.status(200).json({
+      paymentIntent: paymentIntent.client_secret,
+      ephemeralKey: ephemeralKey.secret,
+      customer,
+      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+    });
+
+  } catch (error) {
+    console.error('[Platform Payment Error]', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/hold-payment', async (req, res) => {
+  try {
+    const { amount, currency, customerId, rentalId } = req.body;
+
+    if (!amount || !currency || !rentalId) {
+      return res.status(400).json({ error: 'Missing amount, currency, or rentalId' });
+    }
+
+    // Create customer if not passed in
+    const customer = customerId || (await stripe.customers.create()).id;
+
+    // Create an ephemeral key (for Stripe Payment Sheet on mobile)
+    const ephemeralKey = await stripe.ephemeralKeys.create(
+      { customer },
+      { apiVersion: '2024-09-30.acacia' }
+    );
+
+    // Create PaymentIntent (funds go to your platform balance)
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount, // e.g. 4000 for £40.00
+      currency, // e.g. 'GBP'
+      customer,
+      automatic_payment_methods: { enabled: true },
+      transfer_group: `rental_${rentalId}`, // for tracking
+      metadata: {
+        rentalId,
+        purpose: 'rental_hold',
+      },
+    });
+
+    res.status(200).json({
+      paymentIntent: paymentIntent.client_secret,
+      ephemeralKey: ephemeralKey.secret,
+      customer,
+      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+    });
+
+  } catch (error) {
+    console.error('[Hold Payment Error]', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/release-to-lender', async (req, res) => {
+  try {
+    const { amount, currency, connectedAccountId, rentalId } = req.body;
+
+    if (!amount || !currency || !connectedAccountId || !rentalId) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Perform manual transfer to the connected account
+    const transfer = await stripe.transfers.create({
+      amount, // e.g. 4000 = £40.00
+      currency, // 'GBP'
+      destination: connectedAccountId, // Lender's Stripe account ID
+      transfer_group: `rental_${rentalId}`, // match PaymentIntent's transfer_group
+      metadata: {
+        rentalId,
+        released_by: 'Borrower Confirmation',
+      },
+    });
+
+    res.status(200).json({ success: true, transferId: transfer.id });
+
+  } catch (error) {
+    console.error('[Release Transfer Error]', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/refund-deposit', async (req, res) => {
+  const { paymentIntentId, amountToRefundInPence } = req.body;
+
+  try {
+    const refund = await stripe.refunds.create({
+      payment_intent: paymentIntentId,
+      amount: amountToRefundInPence, // e.g. 1000 = £10
+    });
+
+    res.json({ success: true, refund });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 exports.api = functions.https.onRequest(app);
