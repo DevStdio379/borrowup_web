@@ -94,10 +94,10 @@ app.post('/payment-sheet', async (req, res) => {
 
 app.post('/hold-payment', async (req, res) => {
   try {
-    const { amount, currency, customerId, rentalId } = req.body;
+    const { amount, currency, customerId, borrowingId } = req.body;
 
-    if (!amount || !currency || !rentalId) {
-      return res.status(400).json({ error: 'Missing amount, currency, or rentalId' });
+    if (!amount || !currency || !borrowingId) {
+      return res.status(400).json({ error: 'Missing amount, currency, or borrowingId' });
     }
 
     // Create customer if not passed in
@@ -115,9 +115,9 @@ app.post('/hold-payment', async (req, res) => {
       currency, // e.g. 'GBP'
       customer,
       automatic_payment_methods: { enabled: true },
-      transfer_group: `rental_${rentalId}`, // for tracking
+      transfer_group: `${borrowingId}`, // for tracking
       metadata: {
-        rentalId,
+        borrowingId,
         purpose: 'rental_hold',
       },
     });
@@ -137,9 +137,9 @@ app.post('/hold-payment', async (req, res) => {
 
 app.post('/release-to-lender', async (req, res) => {
   try {
-    const { amount, currency, connectedAccountId, rentalId } = req.body;
+    const { amount, currency, connectedAccountId, borrowingId } = req.body;
 
-    if (!amount || !currency || !connectedAccountId || !rentalId) {
+    if (!amount || !currency || !connectedAccountId || !borrowingId) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -148,9 +148,9 @@ app.post('/release-to-lender', async (req, res) => {
       amount, // e.g. 4000 = £40.00
       currency, // 'GBP'
       destination: connectedAccountId, // Lender's Stripe account ID
-      transfer_group: `rental_${rentalId}`, // match PaymentIntent's transfer_group
+      transfer_group: `${borrowingId}`, // match PaymentIntent's transfer_group
       metadata: {
-        rentalId,
+        borrowingId,
         released_by: 'Borrower Confirmation',
       },
     });
