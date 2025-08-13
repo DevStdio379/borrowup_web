@@ -124,6 +124,7 @@ app.post('/hold-payment', async (req, res) => {
 
     res.status(200).json({
       paymentIntent: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
       ephemeralKey: ephemeralKey.secret,
       customer,
       publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
